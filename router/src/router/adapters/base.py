@@ -1,3 +1,4 @@
+import logging
 import litellm
 import asyncio
 from typing import AsyncGenerator, Dict, Any, List, Optional
@@ -6,6 +7,8 @@ import httpx
 
 from shared.security import decrypt_secret
 from shared.models import Credential
+
+logger = logging.getLogger(__name__)
 
 async def fetch_json_safe(
     url: str,
@@ -83,6 +86,7 @@ class ProviderAdapter:
         import os
         api_key = decrypt_secret(credential.secret_enc, credential.iv)
         model_str = f"{self.litellm_prefix}/{model}"
+        logger.info("Adapter chat: provider=%s model=%s stream=%s", self.provider_name, model, stream)
 
         litellm.drop_params = True
 
@@ -124,8 +128,11 @@ class ProviderAdapter:
         """Fetch available models from the provider API."""
         api_key = decrypt_secret(credential.secret_enc, credential.iv)
         try:
-            return await self._list_models_impl(api_key, credential.auth_type)
-        except Exception:
+            models = await self._list_models_impl(api_key, credential.auth_type)
+            logger.debug("list_models: provider=%s returned %d model(s)", self.provider_name, len(models))
+            return models
+        except Exception as e:
+            logger.warning("list_models failed for provider=%s: %s", self.provider_name, e)
             return []
 
     async def _list_models_impl(self, api_key: str, auth_type: str = "api_key") -> List[ModelInfo]:
@@ -140,7 +147,8 @@ class ProviderAdapter:
         api_key = decrypt_secret(credential.secret_enc, credential.iv)
         try:
             return await self._get_quota_impl(api_key, credential.auth_type)
-        except Exception:
+        except Exception as e:
+            logger.warning("get_quota failed for provider=%s: %s", self.provider_name, e)
             return QuotaInfo(tokens_remaining=10000)
 
     async def _get_quota_impl(self, api_key: str, auth_type: str = "api_key") -> QuotaInfo:

@@ -22,9 +22,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VENV_PYTHON=".venv/bin/python"
-
-if [[ ! -f "$VENV_PYTHON" ]]; then
+# Cross-platform: Linux/macOS use bin/, Windows (Git Bash/MSYS) uses Scripts/
+if [[ -f ".venv/bin/python" ]]; then
+    VENV_PYTHON=".venv/bin/python"
+elif [[ -f ".venv/Scripts/python" ]]; then
+    VENV_PYTHON=".venv/Scripts/python"
+elif [[ -f ".venv/Scripts/python.exe" ]]; then
+    VENV_PYTHON=".venv/Scripts/python.exe"
+else
     echo "❌  Virtual environment not found at .venv/"
     echo "    Run: ./unifyroute setup"
     exit 1

@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -9,6 +10,8 @@ from shared.schemas import ModelResponse
 
 from api_gateway.auth import get_current_key
 import yaml
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["Models"])
 
@@ -39,6 +42,7 @@ async def list_models(
                 "tier": pm.tier,
                 "enabled": pm.enabled
             })
+        logger.debug("Models list: admin view, %d model(s)", len(data))
         return {"object": "list", "data": data}
 
     # ── Standard user sees virtual aliases from routing config ──

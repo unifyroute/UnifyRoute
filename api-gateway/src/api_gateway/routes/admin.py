@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from pydantic import BaseModel
 import datetime
+import logging
 import uuid
 import json
 import jwt
@@ -25,6 +26,8 @@ from router.quota import trigger_provider_sync
 
 from api_gateway.auth import require_admin_key, JWT_SECRET, JWT_ALGORITHM
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
 class LoginRequest(BaseModel):
@@ -35,6 +38,7 @@ async def admin_login(req: LoginRequest, response: Response):
     import os
     admin_password = os.environ.get("MASTER_PASSWORD") or os.environ.get("ADMIN_PASSWORD", "admin")
     if req.password != admin_password:
+        logger.warning("Admin login failed: invalid password")
         raise HTTPException(status_code=401, detail="Invalid password")
         
     payload = {
@@ -44,6 +48,7 @@ async def admin_login(req: LoginRequest, response: Response):
     }
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
     response.set_cookie("gateway_jwt", token, httponly=True, max_age=86400, samesite="lax")
+    logger.info("Admin login successful")
     return {"status": "success", "token": token}
 
 @router.post("/logout")
@@ -76,6 +81,7 @@ async def create_provider(
     session.add(db_obj)
     await session.commit()
     await session.refresh(db_obj)
+    logger.info("Created provider: name=%s id=%s", provider.name, db_obj.id)
     return db_obj
 
 @router.patch("/providers/{id}", response_model=ProviderResponse)
@@ -205,6 +211,7 @@ async def create_credential(
     session.add(db_obj)
     await session.commit()
     await session.refresh(db_obj)
+    logger.info("Created credential: label=%s provider=%s id=%s", cred.label, cred.provider_id, db_obj.id)
     return db_obj
 
 @router.patch("/credentials/{id}", response_model=CredentialResponse)
@@ -433,6 +440,10 @@ async def sync_provider_models(
         inserted += 1
 
     await session.commit()
+    logger.info(
+        "Model sync for provider=%s: %d inserted, %d total (source=%s)",
+        provider.name, inserted, before + inserted, source,
+    )
 
     return {
         "status": "ok",
@@ -518,6 +529,7 @@ async def create_key(
     session.add(db_obj)
     await session.commit()
     await session.refresh(db_obj)
+    logger.info("Created API key: label=%s id=%s scopes=%s", req.label, db_obj.id, req.scopes)
     
     return {
         "id": db_obj.id,

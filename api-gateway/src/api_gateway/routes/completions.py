@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,8 @@ from router.adapters import get_adapter
 from router.quota import mark_provider_failed
 
 from api_gateway.auth import get_current_key
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["Completions"])
 
@@ -51,7 +54,7 @@ async def log_request_bg(
         session.add(log_entry)
         await session.commit()
     except Exception as e:
-        print(f"[BG TASK ERROR] Failed to log request: {e}")
+        logger.error("Failed to persist request log: %s", e)
 
 async def _stream_generator(response, start_time: float, bg_data: dict, session: AsyncSession, is_text_completion: bool = False):
     """
@@ -88,8 +91,7 @@ async def _stream_generator(response, start_time: float, bg_data: dict, session:
         bg_data["status"] = "success_stream"
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.error("Stream error for %s/%s: %s", bg_data.get('provider'), bg_data.get('actual_model'), e, exc_info=True)
         
         # litellm exceptions can sometimes contain raw bytes `b"{...}"` in their string representation
         # which looks ugly or fails to parse nicely on the frontend.
@@ -137,13 +139,16 @@ async def create_chat_completion(
     session: AsyncSession = Depends(get_db_session)
 ):
     start_time = datetime.datetime.now().timestamp()
+    logger.info("Chat completion request: model=%s stream=%s key=%s", body.model, body.stream, key.label)
     
     try:
         candidates = await get_ranked_candidates(session, body.model, body)
         last_error = "No candidates found" if not candidates else None
+        logger.info("Routing resolved %d candidate(s) for alias '%s'", len(candidates), body.model)
     except RuntimeError as e:
         candidates = []
         last_error = str(e)
+        logger.warning("No routing candidates for '%s': %s", body.model, last_error)
         
     prompt_json = json.dumps([m.model_dump() for m in body.messages])
     
@@ -173,6 +178,7 @@ async def create_chat_completion(
             # Format prompt string correctly if using text completion vs chat completion
             # litellm proxying usually handles this transparently
             
+            logger.info("Trying provider=%s model=%s (cred=%s)", provider_name, actual_model, credential.label)
             response = await adapter.chat(
                 credential=credential,
                 messages=body.model_dump()["messages"],
@@ -205,6 +211,10 @@ async def create_chat_completion(
                 completion_text = response.choices[0].message.content if hasattr(response, 'choices') else ""
                 
                 latency_ms = int((datetime.datetime.now().timestamp() - start_time) * 1000)
+                logger.info(
+                    "Chat completion success: provider=%s model=%s tokens=%d/%d latency=%dms",
+                    provider_name, actual_model, prompt_tokens, completion_tokens, latency_ms,
+                )
                 
                 await log_request_bg(
                     session, key.id, body.model, actual_model, provider_name,
@@ -221,16 +231,15 @@ async def create_chat_completion(
             # Mark failed and try next
             await mark_provider_failed(credential.id, actual_model)
             last_error = f"Connection error: {str(e)}"
+            logger.warning("Connection error with %s/%s, failing over: %s", provider_name, actual_model, e)
             continue
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             # Rate limits or auth errors
             error_str = str(e).lower()
             if "rate limit" in error_str or "429" in error_str or "unauthorized" in error_str:
                  await mark_provider_failed(credential.id, actual_model)
-                 
             last_error = str(e)
+            logger.warning("Error with %s/%s, failing over: %s", provider_name, actual_model, last_error)
             continue
             
     # If we exhausted all candidates
@@ -239,6 +248,7 @@ async def create_chat_completion(
     latency_ms = int((datetime.datetime.now().timestamp() - start_time) * 1000)
     config = get_routing_config()
     exhaustion_msg = config.get("exhaustion_message", "We're sorry, no models or quota are available right now.")
+    logger.warning("All candidates exhausted for '%s' (%dms): %s", body.model, latency_ms, last_error)
 
     await log_request_bg(
         session, key.id, body.model, "unknown", "exhausted",
@@ -299,6 +309,7 @@ async def create_completion(
     session: AsyncSession = Depends(get_db_session)
 ):
     start_time = datetime.datetime.now().timestamp()
+    logger.info("Text completion request: model=%s stream=%s key=%s", body.model, body.stream, key.label)
     
     from shared.schemas import ChatRequest
     chat_req = ChatRequest(
@@ -311,9 +322,11 @@ async def create_completion(
     try:
         candidates = await get_ranked_candidates(session, body.model, chat_req)
         last_error = "No candidates found" if not candidates else None
+        logger.info("Routing resolved %d candidate(s) for text alias '%s'", len(candidates), body.model)
     except RuntimeError as e:
         candidates = []
         last_error = str(e)
+        logger.warning("No routing candidates for text '%s': %s", body.model, last_error)
         
     prompt_json = json.dumps({"prompt": body.prompt})
     
@@ -397,12 +410,14 @@ async def create_completion(
         except httpx.ReadError as e:
             await mark_provider_failed(credential.id, actual_model)
             last_error = f"Connection error: {str(e)}"
+            logger.warning("Text completion connection error with %s/%s: %s", provider_name, actual_model, e)
             continue
         except Exception as e:
             error_str = str(e).lower()
             if "rate limit" in error_str or "429" in error_str or "unauthorized" in error_str:
                  await mark_provider_failed(credential.id, actual_model)
             last_error = str(e)
+            logger.warning("Text completion error with %s/%s: %s", provider_name, actual_model, last_error)
             continue
             
     # If we exhausted all candidates

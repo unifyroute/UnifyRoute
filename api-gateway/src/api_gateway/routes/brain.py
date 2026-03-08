@@ -1,4 +1,5 @@
 import datetime
+import logging
 from uuid import UUID
 from typing import Dict, Any, List
 
@@ -10,6 +11,8 @@ from sqlalchemy import select
 from shared.database import get_db_session
 from shared.models import Provider, Credential, GatewayKey
 from api_gateway.auth import require_admin_key
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/brain", tags=["Brain"])
 
@@ -74,6 +77,7 @@ async def brain_status(
             },
         })
 
+    logger.info("Brain status: %d provider(s) returned", len(items))
     return {"brain_providers": items, "total": len(items)}
 
 
@@ -102,6 +106,7 @@ async def brain_assign_provider(
     session.add(entry)
     await session.commit()
     await session.refresh(entry)
+    logger.info("Brain provider assigned: provider=%s model=%s priority=%d", data.provider_id, data.model_id, data.priority)
     return entry
 
 
@@ -170,8 +175,11 @@ async def brain_import(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.error("Brain import failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=brain_safe_message(exc))
 
+    logger.info("Brain import: %d providers, %d credentials, %d models, %d assignments",
+                result.providers_created, result.credentials_created, result.models_created, result.brain_assignments_created)
     return {
         "status": "success" if not result.errors else "partial",
         "providers_created": result.providers_created,

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import uuid
 import datetime
+import logging
 import yaml as _yaml
 from typing import Any, Dict, List, Optional
 
@@ -46,6 +47,8 @@ from shared.security import encrypt_secret
 from api_gateway.auth import require_admin_key
 from api_gateway.routes.model_catalog import ModelEntry, get_catalog
 from api_gateway.routes.seeds import _PROVIDER_SEED
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/wizard", tags=["Wizard"])
 
@@ -250,6 +253,8 @@ async def wizard_onboard(
 
     try:
         # ── Step 1 & 2 & 3 — providers, credentials, models ──────────────────
+        logger.info("Wizard onboard started: %d provider(s), %d routing tier(s), %d brain entry(ies)",
+                    len(payload.providers), len(payload.routing_tiers), len(payload.brain_entries))
 
         # Track provider_name → Provider ORM object (for brain step)
         provider_map: Dict[str, Provider] = {}
@@ -434,4 +439,5 @@ async def wizard_onboard(
         raise
     except Exception as exc:
         await session.rollback()
+        logger.error("Wizard onboard failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Wizard onboard failed: {str(exc)}") from exc

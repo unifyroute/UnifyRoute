@@ -1,5 +1,8 @@
 import os
+import logging
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+
+logger = logging.getLogger(__name__)
 
 
 def get_database_url() -> str:
@@ -37,7 +40,9 @@ def _ensure_sqlite_dir(url: str):
                 os.makedirs(parent, exist_ok=True)
 
 
-engine = create_async_engine(get_database_url(), echo=False)
+_db_url = get_database_url()
+logger.info("Database engine: %s", _db_url)
+engine = create_async_engine(_db_url, echo=False)
 async_session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 

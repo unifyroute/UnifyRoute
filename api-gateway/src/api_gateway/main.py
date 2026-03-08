@@ -1,8 +1,12 @@
 import time
+import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 # --- Imported Routers ---
 from api_gateway.routes.admin import router as admin_router
@@ -12,6 +16,20 @@ from api_gateway.routes.oauth import router as oauth_router
 from api_gateway.routes.wizard import router as wizard_router
 
 app = FastAPI(title="LLM Gateway API")
+
+# --- Request logging middleware ---
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = time.time()
+        response = await call_next(request)
+        elapsed_ms = int((time.time() - start) * 1000)
+        logger.info(
+            "%s %s → %s (%dms)",
+            request.method, request.url.path, response.status_code, elapsed_ms,
+        )
+        return response
+
+app.add_middleware(RequestLoggingMiddleware)
 
 # Setup CORS
 app.add_middleware(
@@ -42,6 +60,7 @@ async def custom_http_exception_handler(request: Request, exc: StarletteHTTPExce
         friendly_detail = get_friendly_error_message(detail)
     else:
         friendly_detail = detail
+    logger.warning("HTTP %s on %s: %s", exc.status_code, request.url.path, detail)
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": {"message": friendly_detail, "type": "gateway_error", "code": exc.status_code}}
@@ -51,6 +70,7 @@ async def custom_http_exception_handler(request: Request, exc: StarletteHTTPExce
 async def global_exception_handler(request: Request, exc: Exception):
     error_message = str(exc)
     friendly_message = get_friendly_error_message(error_message)
+    logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, error_message, exc_info=True)
     return JSONResponse(
         status_code=500,
         content={"error": {"message": friendly_message, "type": "internal_error", "details": error_message}}

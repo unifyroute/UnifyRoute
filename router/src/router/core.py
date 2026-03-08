@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 from typing import Tuple, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,8 @@ from shared.models import Credential, ProviderModel
 from shared.schemas import ChatRequest
 from router.config import get_routing_config
 from router.quota import get_quota_for_model, is_provider_failed, mark_provider_failed, get_redis
+
+logger = logging.getLogger(__name__)
 
 
 class Candidate:
@@ -32,6 +35,7 @@ class Candidate:
 
 async def get_candidate_details(session: AsyncSession, provider_name: str, model_id: str, needs_functions: bool = False, diagnostics: dict = None) -> List[Candidate]:
     """Look up credentials and models for a given provider + model_id string."""
+    logger.debug("Looking up candidates for provider=%s model=%s", provider_name, model_id)
     stmt = (
         select(Credential, ProviderModel)
         .join(ProviderModel, Credential.provider_id == ProviderModel.provider_id)
@@ -81,6 +85,7 @@ async def get_candidate_details(session: AsyncSession, provider_name: str, model
             output_cost_per_1k=float(model.output_cost_per_1k),
         ))
 
+    logger.debug("get_candidate_details: provider=%s model=%s → %d candidate(s)", provider_name, model_id, len(candidates))
     return candidates
 
 
@@ -165,6 +170,7 @@ def _auto_select_tier(request: ChatRequest) -> str:
     # 1. Task-type classification
     task_type = _detect_task_type(request)
     preferred_tier, _ = _TASK_TIER_MAP.get(task_type, ("lite", []))
+    logger.debug("Auto-tier: task_type=%s preferred_tier=%s", task_type, preferred_tier)
 
     # 2. Size override: very long requests should always use thinking
     total_content_len = 0
@@ -184,8 +190,10 @@ def _auto_select_tier(request: ChatRequest) -> str:
     if max_tokens > 512 or msg_count > 3 or total_content_len > 500:
         # Size says base or higher — pick whichever is the richer tier
         if preferred_tier == "lite":
+            logger.info("Auto-tier selected: base (size override from lite)")
             return "base"
 
+    logger.info("Auto-tier selected: %s (task_type=%s)", preferred_tier, task_type)
     return preferred_tier
 
 
@@ -340,6 +348,7 @@ async def get_ranked_candidates(session: AsyncSession, alias: str, request: Chat
     The caller is responsible for trying them in order and falling back on error.
     Raises RuntimeError if no candidates are available at all.
     """
+    logger.info("get_ranked_candidates: alias='%s' is_fallback=%s", alias, _is_fallback)
     if diagnostics is None:
         diagnostics = {"total": 0, "failed": 0, "no_tools": 0, "quota": 0, "disabled": 0}
     # Remember the original alias before any normalization (needed for direct model ID lookup)
@@ -354,6 +363,7 @@ async def get_ranked_candidates(session: AsyncSession, alias: str, request: Chat
         known_tiers = {"lite", "base", "thinking", "auto"}
         if "/" not in stripped or stripped in known_tiers:
             alias = stripped
+            logger.debug("Stripped provider prefix: '%s' → '%s'", original_alias, alias)
 
     needs_functions = bool(getattr(request, "model_extra", {}) and request.model_extra.get("tools"))
 
@@ -390,9 +400,11 @@ async def get_ranked_candidates(session: AsyncSession, alias: str, request: Chat
                 pass
                 
         if all_candidates:
+            logger.info("Auto-tier resolved %d candidate(s)", len(all_candidates))
             return all_candidates
             
         diag_str = f"(Evaluated {diagnostics.get('total', 0)} candidates: {diagnostics.get('disabled', 0)} disabled in UI, {diagnostics.get('failed', 0)} failed health check, {diagnostics.get('quota', 0)} out of quota, {diagnostics.get('no_tools', 0)} missing tools support)"
+        logger.warning("Auto-tier exhausted: %s", diag_str)
         raise RuntimeError(f"No valid routing candidates found for auto tier selection. {diag_str}")
 
     if alias in ["lite", "base", "thinking"]:
@@ -508,6 +520,7 @@ async def get_ranked_candidates(session: AsyncSession, alias: str, request: Chat
             session, original_alias, needs_functions=needs_functions, diagnostics=diagnostics
         )
         if direct_candidates:
+            logger.info("Direct model-ID passthrough: '%s' → %d candidate(s)", original_alias, len(direct_candidates))
             return direct_candidates
 
         # Nothing matched — surface a clear error
@@ -634,7 +647,11 @@ async def get_ranked_candidates(session: AsyncSession, alias: str, request: Chat
             
         scored.sort(key=lambda x: -x[0])  # Sort descending by score
         candidates = [sc[1] for sc in scored]
-        
+
+    logger.debug(
+        "Ranked %d candidates for '%s' (strategy=%s): diagnostics=%s",
+        len(candidates), alias, strategy if 'strategy' in dir() else 'default', diagnostics,
+    )
     return candidates
 
 
@@ -647,4 +664,5 @@ async def select_model(session: AsyncSession, alias: str, request: ChatRequest) 
     """
     candidates = await get_ranked_candidates(session, alias, request)
     best = candidates[0]
+    logger.info("select_model: alias='%s' → provider=%s model=%s", alias, best.provider, best.model_id)
     return best.credential_id, best.provider, best.model_id

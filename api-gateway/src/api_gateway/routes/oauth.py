@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, Query, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,8 @@ from shared.models import Provider, Credential, GatewayKey
 from shared.security import encrypt_secret
 
 from api_gateway.auth import get_current_key, require_admin_key
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/oauth", tags=["OAuth"])
 
@@ -131,6 +134,7 @@ async def antigravity_start(
     }
     
     url = f"{_ANTIGRAVITY_AUTH_URL}?{urllib.parse.urlencode(params)}"
+    logger.info("Google Antigravity OAuth started for provider=%s", provider.id)
     return {"oauth_url": url}
 
 @router.get("/google-antigravity/callback")
@@ -168,6 +172,7 @@ async def antigravity_callback(
             }
         )
         if token_resp.status_code != 200:
+            logger.error("Google Antigravity token exchange failed: %s", token_resp.text)
             return _oauth_error_html(f"Failed to exchange token: {token_resp.text}")
             
         token_data = token_resp.json()
@@ -232,6 +237,7 @@ async def antigravity_callback(
     )
     session.add(cred)
     await session.commit()
+    logger.info("Google Antigravity credential created: label=%s email=%s", label, email)
 
     return _oauth_success_html("Antigravity Authentication Successful")
 
@@ -351,6 +357,7 @@ async def oauth_callback(
             }
         )
         if token_resp.status_code != 200:
+            logger.error("Generic OAuth token exchange failed for provider=%s: %s", provider_id_str, token_resp.text)
             return _oauth_error_html(f"Failed to exchange token: {token_resp.text}")
             
         token_data = token_resp.json()
@@ -379,5 +386,6 @@ async def oauth_callback(
     )
     session.add(cred)
     await session.commit()
+    logger.info("Generic OAuth credential created: provider=%s label=%s", provider.name, cred.label)
 
     return _oauth_success_html("Authentication Successful")
