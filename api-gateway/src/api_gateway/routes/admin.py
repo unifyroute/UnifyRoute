@@ -14,6 +14,7 @@ from uuid import UUID
 
 from shared.database import get_db_session
 from shared.models import Provider, Credential, ProviderModel, GatewayKey, RequestLog, RoutingConfig
+from shared.security import unwrap_secret
 from shared.schemas import (
     ProviderCreate, ProviderUpdate, ProviderResponse,
     CredentialCreate, CredentialUpdate, CredentialResponse,
@@ -35,21 +36,26 @@ class LoginRequest(BaseModel):
     password: str
 
 @router.post("/login")
-async def admin_login(req: LoginRequest, response: Response):
+async def admin_login(req: LoginRequest, response: Response, session: AsyncSession = Depends(get_db_session)):
     import os
-    admin_password = os.environ.get("MASTER_PASSWORD") or os.environ.get("ADMIN_PASSWORD", "admin")
+    admin_password = unwrap_secret(os.environ.get("MASTER_PASSWORD") or os.environ.get("ADMIN_PASSWORD", "admin"))
     if req.password != admin_password:
         logger.warning("Admin login failed: invalid password")
         raise HTTPException(status_code=401, detail="Invalid password")
-        
-    payload = {
-        "sub": "admin",
-        "scopes": ["admin"],
-        "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
-    }
-    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    response.set_cookie("gateway_jwt", token, httponly=True, max_age=86400, samesite="lax")
-    logger.info("Admin login successful")
+
+    # Look up an admin-scoped gateway key to return its raw token
+    stmt = select(GatewayKey).where(GatewayKey.enabled == True)
+    result = await session.execute(stmt)
+    all_keys = result.scalars().all()
+    admin_key = next((k for k in all_keys if "admin" in (k.scopes or [])), None)
+
+    if not admin_key or not admin_key.raw_token:
+        logger.error("Admin login: no admin gateway key found in database")
+        raise HTTPException(status_code=500, detail="No admin key configured. Please create an admin key first.")
+
+    token = admin_key.raw_token
+    response.set_cookie("gateway_jwt", "", httponly=True, max_age=0, samesite="lax")  # clear any stale JWT cookie
+    logger.info("Admin login successful (returned admin gateway key)")
     return {"status": "success", "token": token}
 
 @router.post("/logout")
@@ -741,7 +747,7 @@ async def reveal_key(
     session: AsyncSession = Depends(get_db_session)
 ):
     import os
-    admin_password = os.environ.get("MASTER_PASSWORD") or os.environ.get("ADMIN_PASSWORD", "admin")
+    admin_password = unwrap_secret(os.environ.get("MASTER_PASSWORD") or os.environ.get("ADMIN_PASSWORD", "admin"))
     if req.password != admin_password:
         raise HTTPException(status_code=401, detail="Invalid master password")
 

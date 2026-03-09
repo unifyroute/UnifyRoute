@@ -3,3 +3,14 @@ packaging==26.0
 pluggy==1.6.0
 Pygments==2.19.2
 pytest==9.0.2
+uv
+uvicorn
+fastapi
+# Workspace packages (not published on PyPI)
+-e ./shared
+-e ./brain
+-e ./router
+-e ./api-gateway
+-e ./credential-vault
+-e ./quota-poller
+-e ./launcher

@@ -34,6 +34,31 @@ def encrypt_secret(secret: str) -> Tuple[bytes, bytes]:
     ciphertext = aesgcm.encrypt(iv, secret.encode('utf-8'), None)
     return ciphertext, iv
 
+def wrap_secret(secret: str) -> str:
+    """Wraps a secret string into an encrypted format prefixed with 'enc:'."""
+    ciphertext, iv = encrypt_secret(secret)
+    iv_b64 = base64.urlsafe_b64encode(iv).decode('utf-8')
+    ct_b64 = base64.urlsafe_b64encode(ciphertext).decode('utf-8')
+    return f"enc:{iv_b64}:{ct_b64}"
+
+def unwrap_secret(wrapped: str) -> str:
+    """Unwraps a secret string if it's prefixed with 'enc:', otherwise returns it as-is."""
+    if not isinstance(wrapped, str) or not wrapped.startswith("enc:"):
+        return wrapped
+    
+    try:
+        parts = wrapped.split(":")
+        if len(parts) != 3:
+            return wrapped
+        
+        iv = base64.urlsafe_b64decode(parts[1].encode('utf-8'))
+        ciphertext = base64.urlsafe_b64decode(parts[2].encode('utf-8'))
+        
+        return decrypt_secret(ciphertext, iv)
+    except Exception:
+        # If decryption fails, maybe it wasn't actually an encrypted secret but just started with enc:
+        return wrapped
+
 def decrypt_secret(encrypted_secret: bytes, iv: Optional[bytes] = None) -> str:
     """Decrypts a bytes secret using the master vault key with AES-256-GCM.
     If IV is None, falls back to legacy Fernet decryption.

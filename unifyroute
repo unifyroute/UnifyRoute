@@ -35,6 +35,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+import base64
 
 # Force UTF-8 encoding for output
 if sys.platform == "win32":
@@ -101,13 +102,47 @@ def _info(msg: str):
     print(f"ℹ️   {msg}")
 
 
+def _unwrap_password(wrapped: str) -> str:
+    """Decrypt a password if it's in the 'enc:iv:ct' format."""
+    if not wrapped.startswith("enc:"):
+        return wrapped
+    
+    # Needs cryptography. If not present, we can't unwrap.
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError:
+        # If we can't import it, just return it as is and wait for verification to fail
+        # or maybe warn the user.
+        return wrapped
+
+    try:
+        parts = wrapped.split(":")
+        if len(parts) != 3:
+            return wrapped
+        
+        iv = base64.urlsafe_b64decode(parts[1])
+        ciphertext = base64.urlsafe_b64decode(parts[2])
+        
+        # Get VAULT_MASTER_KEY
+        val = os.environ.get("VAULT_MASTER_KEY")
+        if not val:
+            return wrapped
+        
+        key_bytes = base64.urlsafe_b64decode(val)
+        aesgcm = AESGCM(key_bytes)
+        plaintext = aesgcm.decrypt(iv, ciphertext, None)
+        return plaintext.decode('utf-8')
+    except Exception:
+        return wrapped
+
+
 def _verify_master_password() -> bool:
     """
     Ask the user for the master password and validate it against MASTER_PASSWORD
     (or ADMIN_PASSWORD for backward compatibility) from the environment.
     Returns True if verified, exits on failure.
     """
-    expected = os.environ.get("MASTER_PASSWORD") or os.environ.get("ADMIN_PASSWORD", "")
+    expected = _unwrap_password(os.environ.get("MASTER_PASSWORD") or os.environ.get("ADMIN_PASSWORD", ""))
     if not expected:
         _die(
             "MASTER_PASSWORD is not set in .env. Run `./unifyroute setup` first "
