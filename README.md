@@ -6,6 +6,8 @@
 
 UnifyRoute is a self-hosted, OpenAI-compatible gateway for routing requests across multiple LLM providers with failover, quota awareness, and a management UI.
 
+![unifyroute](https://github.com/user-attachments/assets/cd17af46-9de3-4da3-bb3a-ac8d1c3f0bbc)
+
 ## Why UnifyRoute ✨
 
 - OpenAI-compatible API endpoints for easy SDK/tool integration.
