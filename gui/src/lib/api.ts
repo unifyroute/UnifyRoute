@@ -4,8 +4,8 @@ const API_BASE = '/api'
 
 export function getAuthToken(): string {
     const token = localStorage.getItem('admin_token') || ''
-    // Migration guard: old app used 'ey' or 'logged_in'
-    if (token.startsWith('ey') || token === 'logged_in') {
+    // Migration guard: old app used 'logged_in'
+    if (token === 'logged_in') {
         localStorage.removeItem('admin_token')
         return ''
     }

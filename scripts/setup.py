@@ -488,8 +488,13 @@ def cmd_install():
             ok("JWT_SECRET already set — keeping existing.")
         config["JWT_SECRET"] = jwt_secret
 
-    # ── 5. Write .env ───────────────────────────────────────────────
-    banner("5. Writing .env")
+        # ── 5. Encrypt Master Password ──────────────────────────────────
+        if not config["MASTER_PASSWORD"].startswith("enc:"):
+            info("Encrypting master password for security...")
+            config["MASTER_PASSWORD"] = _encrypt_password(config["MASTER_PASSWORD"], config["VAULT_MASTER_KEY"])
+
+    # ── 6. Write .env ───────────────────────────────────────────────
+    banner("6. Writing .env")
     write_env_file(ENV_FILE, config, header=True)
     ok(f".env written to {ENV_FILE}")
 
@@ -784,6 +789,28 @@ def _generate_fernet_key() -> str:
     import base64
     raw = secrets.token_bytes(32)
     return base64.urlsafe_b64encode(raw).decode("utf-8")
+
+
+def _encrypt_password(password: str, vault_key_b64: str) -> str:
+    """Try to encrypt the password using AES-256-GCM. Requires cryptography."""
+    if not password:
+        return ""
+    
+    try:
+        import base64
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        
+        key_bytes = base64.urlsafe_b64decode(vault_key_b64.encode('utf-8'))
+        aesgcm = AESGCM(key_bytes)
+        iv = os.urandom(12)
+        ciphertext = aesgcm.encrypt(iv, password.encode('utf-8'), None)
+        
+        iv_b64 = base64.urlsafe_b64encode(iv).decode('utf-8')
+        ct_b64 = base64.urlsafe_b64encode(ciphertext).decode('utf-8')
+        return f"enc:{iv_b64}:{ct_b64}"
+    except (ImportError, Exception) as e:
+        warn(f"Automatic password encryption failed: {e}. Storing as plain text.")
+        return password
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
