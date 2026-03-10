@@ -7,7 +7,8 @@ class TestKeyReveal:
         import os
         from dotenv import load_dotenv
         load_dotenv()
-        pwd = os.environ.get("MASTER_PASSWORD", "admin")
+        from shared.security import unwrap_secret
+        pwd = unwrap_secret(os.environ.get("MASTER_PASSWORD") or os.environ.get("ADMIN_PASSWORD", "admin"))
         
         r_create = admin_client.post("/api/admin/keys", json={
             "label": f"label-reveal-{uuid.uuid4().hex[:6]}",
@@ -28,7 +29,8 @@ class TestKeyReveal:
         import os
         from dotenv import load_dotenv
         load_dotenv()
-        pwd = os.environ.get("MASTER_PASSWORD", "admin")
+        from shared.security import unwrap_secret
+        pwd = unwrap_secret(os.environ.get("MASTER_PASSWORD") or os.environ.get("ADMIN_PASSWORD", "admin"))
         
         r = admin_client.post(f"/api/admin/keys/{uuid.uuid4()}/reveal", json={"password": pwd})
         assert r.status_code == 404

@@ -105,18 +105,35 @@ _CATALOG: Dict[str, List[Dict[str, Any]]] = {
             "model_id": "deepseek-chat",
             "display_name": "DeepSeek Chat (V3)",
             "tier": "base",
-            "context_window": 64000,
-            "input_cost_per_1k": 0.00014,
-            "output_cost_per_1k": 0.00028,
+            "context_window": 65536,
+            "input_cost_per_1k": 0.00027,   # cache miss; cache hit is ~0.000035
+            "output_cost_per_1k": 0.00110,
         },
         {
             "model_id": "deepseek-reasoner",
             "display_name": "DeepSeek Reasoner (R1)",
             "tier": "thinking",
-            "context_window": 64000,
+            "context_window": 65536,
             "input_cost_per_1k": 0.00055,
             "output_cost_per_1k": 0.00219,
-        }
+        },
+        {
+            "model_id": "deepseek-coder",
+            "display_name": "DeepSeek Coder",
+            "tier": "base",
+            "context_window": 16000,
+            "input_cost_per_1k": 0.00014,
+            "output_cost_per_1k": 0.00028,
+            "supports_functions": False,
+        },
+        {
+            "model_id": "deepseek-v2.5",
+            "display_name": "DeepSeek V2.5",
+            "tier": "base",
+            "context_window": 128000,
+            "input_cost_per_1k": 0.00014,
+            "output_cost_per_1k": 0.00028,
+        },
     ]
 }
 

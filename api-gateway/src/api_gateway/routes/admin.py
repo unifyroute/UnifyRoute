@@ -370,17 +370,15 @@ async def sync_provider_models(
 
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
-
     # Find the first enabled credential
     cred = next((c for c in provider.credentials if c.enabled), None)
 
-    # Fetch existing model IDs for this provider
-    existing_stmt = select(ProviderModel.model_id).where(ProviderModel.provider_id == id)
-    existing_res = await session.execute(existing_stmt)
-    existing_ids = {row[0] for row in existing_res.fetchall()}
-    before = len(existing_ids)
+    # ── Fetch existing ProviderModel rows so we can update them ──────────────
+    existing_stmt_full = select(ProviderModel).where(ProviderModel.provider_id == id)
+    existing_res_full = await session.execute(existing_stmt_full)
+    existing_models = {pm.model_id: pm for pm in existing_res_full.scalars().all()}
+    before = len(existing_models)
 
-    inserted = 0
     source = "api"
     model_infos = []
 
@@ -390,29 +388,38 @@ async def sync_provider_models(
             adapter = get_adapter(provider.name)
             model_infos = await adapter.list_models(cred)
         except Exception as exc:
-            # Fall through to catalog fallback
             model_infos = []
             source = f"catalog (live API failed: {exc})"
 
-    # ── Static catalog fallback ──────────────────────────────────────────────
-    if not model_infos:
-        catalog = get_catalog(provider.name)
-        if not catalog:
-            return {
-                "status": "no_models",
-                "provider": provider.name,
-                "total": before,
-                "inserted": 0,
-                "source": source,
-                "message": (
-                    f"No models found for {provider.display_name or provider.name}. "
-                    "Add a credential first, or add models manually."
-                ),
-            }
-        # Convert catalog entries to ModelInfo-like objects
-        from router.adapters.base import ModelInfo
-        model_infos = [
-            ModelInfo(
+    # ── Always merge static catalog models ──────────────────────────────────
+    # The live API may only expose a subset of a provider's models (e.g., DeepSeek
+    # only returns 2 of its models via /v1/models). We always merge the catalog so
+    # every known model is available, with live API results taking priority.
+    from router.adapters.base import ModelInfo
+    catalog = get_catalog(provider.name)
+
+    if not model_infos and not catalog:
+        # No live models AND no catalog — nothing to do
+        return {
+            "status": "no_models",
+            "provider": provider.name,
+            "total": before,
+            "inserted": 0,
+            "updated": 0,
+            "source": source,
+            "message": (
+                f"No models found for {provider.display_name or provider.name}. "
+                "Add a credential first, or add models manually."
+            ),
+        }
+
+    # Build a set of model IDs already captured from the live API
+    live_model_ids = {info.model_id for info in model_infos}
+
+    # Merge catalog: add any catalog model not already covered by live API
+    for m in catalog:
+        if m.model_id not in live_model_ids:
+            model_infos.append(ModelInfo(
                 model_id=m.model_id,
                 display_name=m.display_name,
                 context_window=m.context_window,
@@ -420,36 +427,68 @@ async def sync_provider_models(
                 output_cost_per_1k=m.output_cost_per_1k,
                 supports_streaming=m.supports_streaming,
                 supports_functions=m.supports_functions,
-            )
-            for m in catalog
-        ]
-        source = "catalog"
+            ))
 
-    # ── Insert new models ────────────────────────────────────────────────────
+    if not model_infos:
+        source = "catalog"
+    elif catalog and live_model_ids:
+        source = "api+catalog"
+
+
+    # ── Insert new models / update existing ones ─────────────────────────────
     catalog_entries = get_catalog(provider.name)
     catalog_tiers = {m.model_id: m.tier for m in catalog_entries}
+
+    inserted = 0
+    updated = 0
     for info in model_infos:
-        if info.model_id in existing_ids:
+        if not info.model_id:
             continue
-        model_db = ProviderModel(
-            provider_id=id,
-            model_id=info.model_id,
-            display_name=info.display_name,
-            context_window=info.context_window,
-            input_cost_per_1k=info.input_cost_per_1k,
-            output_cost_per_1k=info.output_cost_per_1k,
-            tier=catalog_tiers.get(info.model_id, ""),
-            supports_streaming=info.supports_streaming,
-            supports_functions=info.supports_functions,
-            enabled=False,  # admin must enable models explicitly
-        )
-        session.add(model_db)
-        inserted += 1
+
+        existing_pm = existing_models.get(info.model_id)
+        if existing_pm:
+            # Update pricing/metadata so costs don't stay at 0.0 from old syncs
+            changed = False
+            if info.input_cost_per_1k and float(existing_pm.input_cost_per_1k) != info.input_cost_per_1k:
+                existing_pm.input_cost_per_1k = info.input_cost_per_1k
+                changed = True
+            if info.output_cost_per_1k and float(existing_pm.output_cost_per_1k) != info.output_cost_per_1k:
+                existing_pm.output_cost_per_1k = info.output_cost_per_1k
+                changed = True
+            if info.context_window and existing_pm.context_window != info.context_window:
+                existing_pm.context_window = info.context_window
+                changed = True
+            if info.display_name and existing_pm.display_name != info.display_name:
+                existing_pm.display_name = info.display_name
+                changed = True
+            # Set tier from catalog if currently unset
+            catalog_tier = catalog_tiers.get(info.model_id, "")
+            if catalog_tier and not existing_pm.tier:
+                existing_pm.tier = catalog_tier
+                changed = True
+            if changed:
+                updated += 1
+        else:
+            # New model — insert (disabled until admin enables it)
+            model_db = ProviderModel(
+                provider_id=id,
+                model_id=info.model_id,
+                display_name=info.display_name,
+                context_window=info.context_window,
+                input_cost_per_1k=info.input_cost_per_1k,
+                output_cost_per_1k=info.output_cost_per_1k,
+                tier=catalog_tiers.get(info.model_id, ""),
+                supports_streaming=info.supports_streaming,
+                supports_functions=info.supports_functions,
+                enabled=False,
+            )
+            session.add(model_db)
+            inserted += 1
 
     await session.commit()
     logger.info(
-        "Model sync for provider=%s: %d inserted, %d total (source=%s)",
-        provider.name, inserted, before + inserted, source,
+        "Model sync for provider=%s: %d inserted, %d updated, %d total (source=%s)",
+        provider.name, inserted, updated, before + inserted, source,
     )
 
     return {
@@ -457,10 +496,12 @@ async def sync_provider_models(
         "provider": provider.name,
         "total": before + inserted,
         "inserted": inserted,
+        "updated": updated,
         "source": source,
         "message": (
             f"Synced {provider.display_name or provider.name} from {source}: "
-            f"{inserted} new model(s) added ({before + inserted} total)."
+            f"{inserted} new model(s) added, {updated} existing model(s) updated "
+            f"({before + inserted} total)."
         ),
     }
 

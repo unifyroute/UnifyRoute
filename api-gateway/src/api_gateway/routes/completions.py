@@ -86,8 +86,12 @@ async def _stream_generator(response, start_time: float, bg_data: dict, session:
             
         yield "data: [DONE]\n\n"
         
-        # Estimate cost (approximate for stream)
-        cost_usd = (prompt_tokens * bg_data.get("cost_in", 0.0) + completion_tokens * bg_data.get("cost_out", 0.0)) / 1_000_000.0
+        # Estimate cost: cost_in / cost_out are already per-1k-tokens,
+        # so divide token count by 1000 to get the USD amount.
+        cost_usd = (
+            prompt_tokens * bg_data.get("cost_in", 0.0)
+            + completion_tokens * bg_data.get("cost_out", 0.0)
+        ) / 1000.0
         bg_data["status"] = "success_stream"
 
     except Exception as e:
@@ -166,8 +170,9 @@ async def create_chat_completion(
         )
         credential = res.scalar_one()
         
-        cost_in = candidate.input_cost_per_1k * 1000.0
-        cost_out = candidate.output_cost_per_1k * 1000.0
+        # cost_in / cost_out: price per 1k tokens (used later as: tokens * rate / 1000)
+        cost_in = candidate.input_cost_per_1k
+        cost_out = candidate.output_cost_per_1k
 
         adapter = get_adapter(provider_name)
         
@@ -187,12 +192,18 @@ async def create_chat_completion(
                 **kwargs
             )
             
+            try:
+                import litellm
+                prompt_tokens = litellm.token_counter(model=actual_model, messages=body.model_dump()["messages"])
+            except Exception:
+                prompt_tokens = 0
+
             bg_data = {
                 "client_key_id": key.id,
                 "model_alias": body.model,
                 "actual_model": actual_model,
                 "provider": provider_name,
-                "prompt_tokens": 0,
+                "prompt_tokens": prompt_tokens,
                 "cost_in": cost_in,
                 "cost_out": cost_out,
                 "prompt_json": prompt_json,
@@ -207,7 +218,7 @@ async def create_chat_completion(
             else:
                 prompt_tokens = response.usage.prompt_tokens if hasattr(response, 'usage') else 0
                 completion_tokens = response.usage.completion_tokens if hasattr(response, 'usage') else 0
-                cost_usd = (prompt_tokens * cost_in + completion_tokens * cost_out) / 1_000_000.0
+                cost_usd = (prompt_tokens * cost_in + completion_tokens * cost_out) / 1000.0
                 completion_text = response.choices[0].message.content if hasattr(response, 'choices') else ""
                 
                 latency_ms = int((datetime.datetime.now().timestamp() - start_time) * 1000)
@@ -347,8 +358,9 @@ async def create_completion(
         )
         credential = res.scalar_one()
         
-        cost_in = candidate.input_cost_per_1k * 1000.0
-        cost_out = candidate.output_cost_per_1k * 1000.0
+        # cost_in / cost_out: price per 1k tokens (used later as: tokens * rate / 1000)
+        cost_in = candidate.input_cost_per_1k
+        cost_out = candidate.output_cost_per_1k
 
         adapter = get_adapter(provider_name)
         
@@ -364,12 +376,18 @@ async def create_completion(
                 **kwargs
             )
             
+            try:
+                import litellm
+                prompt_tokens = litellm.token_counter(model=actual_model, messages=messages)
+            except Exception:
+                prompt_tokens = 0
+
             bg_data = {
                 "client_key_id": key.id,
                 "model_alias": body.model,
                 "actual_model": actual_model,
                 "provider": provider_name,
-                "prompt_tokens": 0,
+                "prompt_tokens": prompt_tokens,
                 "cost_in": cost_in,
                 "cost_out": cost_out,
                 "prompt_json": prompt_json,
@@ -384,7 +402,7 @@ async def create_completion(
             else:
                 prompt_tokens = response.usage.prompt_tokens if hasattr(response, 'usage') else 0
                 completion_tokens = response.usage.completion_tokens if hasattr(response, 'usage') else 0
-                cost_usd = (prompt_tokens * cost_in + completion_tokens * cost_out) / 1_000_000.0
+                cost_usd = (prompt_tokens * cost_in + completion_tokens * cost_out) / 1000.0
                 
                 # Adapt chat response format to text completion format
                 completion_text = response.choices[0].message.content if hasattr(response, 'choices') else ""

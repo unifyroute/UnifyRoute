@@ -14,7 +14,7 @@
 #   - For integration tests: API gateway must be running on http://localhost:6565
 #     (or override: OPENROUTER_BASE_URL=http://host:port ./run-tests.sh)
 #   - .admin_token and .api_token files exist at the project root
-#     (created automatically by: ./unifyroute key and ./unifyroute key --admin)
+#     (created automatically by: ./unifyroute create token api and ./unifyroute create token admin)
 #
 # ──────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -80,8 +80,24 @@ run_integration() {
     # Check admin token
     if [[ ! -f ".admin_token" ]] && [[ -z "${ADMIN_TOKEN:-}" ]]; then
         echo "⚠️  No admin token found (.admin_token file or ADMIN_TOKEN env var)"
-        echo "   Create one with:  ./unifyroute key --admin"
-        exit 1
+        echo "   Creating test admin token directly in DB..."
+        python3 -c '
+import os, secrets, hashlib, uuid
+raw_token = f"sk-{secrets.token_urlsafe(32)}"
+key_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+key_id = str(uuid.uuid4())
+import sqlite3
+conn = sqlite3.connect("data/unifyroute.db")
+c = conn.cursor()
+c.execute("INSERT INTO gateway_keys (id, label, key_hash, scopes, enabled) VALUES (?, ?, ?, ?, ?)", (key_id, "test-suite-admin", key_hash, "[\"admin\", \"api\"]", 1))
+conn.commit()
+with open(".admin_token", "w") as f:
+    f.write(raw_token)
+'
+        if [[ $? -ne 0 ]]; then
+            echo "❌  Failed to create admin token."
+            exit 1
+        fi
     fi
 
     # Auto-create API token if missing

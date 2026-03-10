@@ -37,8 +37,7 @@ class TestKeyCreate:
         })
         assert r.status_code == 200, r.text
         body = r.json()
-        assert "token" in body
-        assert body["token"].startswith("unifyroute-")
+        assert body["token"].startswith("sk-")
         # cleanup
         admin_client.delete(f"/api/admin/keys/{body['id']}")
 

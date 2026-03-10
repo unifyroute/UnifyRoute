@@ -380,8 +380,8 @@ async def get_ranked_candidates(session: AsyncSession, alias: str, request: Chat
         chosen = _auto_select_tier(request)
         fallback_order = {
             "thinking": ["thinking", "base", "lite"],
-            "base": ["base", "lite"],
-            "lite": ["lite"],
+            "base": ["base", "lite", "thinking"],
+            "lite": ["lite", "base", "thinking"],
         }
         
         seen_keys = {(str(c.credential_id), c.model_id) for c in all_candidates}
@@ -412,8 +412,8 @@ async def get_ranked_candidates(session: AsyncSession, alias: str, request: Chat
             all_candidates = []
             fallback_order = {
                 "thinking": ["thinking", "base", "lite"],
-                "base": ["base", "lite"],
-                "lite": ["lite"],
+                "base": ["base", "lite", "thinking"],
+                "lite": ["lite", "base", "thinking"],
             }
             for tier in fallback_order.get(alias, [alias]):
                 try:

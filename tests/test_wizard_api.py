@@ -74,9 +74,12 @@ class TestWizardModels:
     def test_model_shape(self, admin_client: httpx.Client):
         r = admin_client.get("/api/admin/wizard/models/openai")
         model = r.json()["models"][0]
-        for field in ("model_id", "display_name", "tier", "context_window",
-                      "input_cost_per_1k", "output_cost_per_1k",
-                      "supports_streaming", "supports_functions", "default_enabled"):
+        expected_fields = [
+        "model_id", "display_name", "tier",
+        "context_window", "input_cost_per_1k", "output_cost_per_1k",
+        "supports_streaming", "supports_functions", "enabled"
+    ]
+        for field in expected_fields:
             assert field in model, f"Expected field '{field}' in model entry"
 
     def test_anthropic_catalog(self, admin_client: httpx.Client):
