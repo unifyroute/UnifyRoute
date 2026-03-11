@@ -222,14 +222,43 @@ def restore_config(ts: str) -> dict[str, str]:
     return config
 
 
-def find_uv() -> str:
+def find_uv() -> list[str]:
     """Find the uv binary."""
     uv = shutil.which("uv")
     if uv:
-        return uv
-    home_uv = Path.home() / ".local" / "bin" / "uv"
-    if home_uv.exists():
-        return str(home_uv)
+        return [uv]
+    
+    # Try as a python module (works if installed via pip)
+    try:
+        import subprocess
+        result = subprocess.run([sys.executable, "-m", "uv", "--version"], capture_output=True, timeout=5)
+        if result.returncode == 0:
+            return [sys.executable, "-m", "uv"]
+    except Exception:
+        pass
+
+    if sys.platform == "win32":
+        uv_exe = shutil.which("uv.exe")
+        if uv_exe:
+            return [uv_exe]
+        
+        # Common Windows paths
+        paths_to_check = [
+            Path(sys.executable).parent / "Scripts" / "uv.exe",
+            Path(sys.executable).parent / "uv.exe",
+            Path.home() / "AppData" / "Local" / "uv" / "bin" / "uv.exe",
+            Path.home() / ".local" / "bin" / "uv.exe",
+            Path.home() / "AppData" / "Roaming" / "Python" / "Scripts" / "uv.exe",
+        ]
+        for p in paths_to_check:
+            if p.exists():
+                return [str(p)]
+    else:
+        # Common Unix paths
+        home_uv = Path.home() / ".local" / "bin" / "uv"
+        if home_uv.exists():
+            return [str(home_uv)]
+            
     err("'uv' is not installed. Install with:\n    curl -LsSf https://astral.sh/uv/install.sh | sh")
     sys.exit(1)
 
@@ -292,9 +321,9 @@ def create_venv():
         ok(f"Virtual environment already exists at {VENV_DIR.relative_to(ROOT)}")
         return
     info(f"Creating virtual environment at {VENV_DIR.relative_to(ROOT)}...")
-    uv = find_uv()
-    if uv:
-        subprocess.run([uv, "venv", str(VENV_DIR)], check=True, cwd=str(ROOT))
+    uv_cmd = find_uv()
+    if uv_cmd:
+        subprocess.run(uv_cmd + ["venv", str(VENV_DIR)], check=True, cwd=str(ROOT))
     else:
         subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True)
     ok("Virtual environment created.")
@@ -308,17 +337,43 @@ def get_venv_python() -> str:
         return str(VENV_DIR / "bin" / "python")
 
 
-def find_or_install_uv(venv_python: str) -> str:
+def find_or_install_uv(venv_python: str) -> list[str] | None:
     """Find uv or install it in the venv, fall back to pip."""
     # Try to find uv in PATH first
     uv = shutil.which("uv")
     if uv:
-        return uv
+        return [uv]
 
-    # Try home .local/bin on Unix
-    home_uv = Path.home() / ".local" / "bin" / "uv"
-    if home_uv.exists():
-        return str(home_uv)
+    # Try as a python module
+    try:
+        import subprocess
+        result = subprocess.run([sys.executable, "-m", "uv", "--version"], capture_output=True, timeout=5)
+        if result.returncode == 0:
+            return [sys.executable, "-m", "uv"]
+    except Exception:
+        pass
+
+    if sys.platform == "win32":
+        uv_exe = shutil.which("uv.exe")
+        if uv_exe:
+            return [uv_exe]
+            
+        # Common Windows paths
+        paths_to_check = [
+            Path(sys.executable).parent / "Scripts" / "uv.exe",
+            Path(sys.executable).parent / "uv.exe",
+            Path.home() / "AppData" / "Local" / "uv" / "bin" / "uv.exe",
+            Path.home() / ".local" / "bin" / "uv.exe",
+            Path.home() / "AppData" / "Roaming" / "Python" / "Scripts" / "uv.exe",
+        ]
+        for p in paths_to_check:
+            if p.exists():
+                return [str(p)]
+    else:
+        # Try home .local/bin on Unix
+        home_uv = Path.home() / ".local" / "bin" / "uv"
+        if home_uv.exists():
+            return [str(home_uv)]
 
     # Try to find or install uv in venv
     info("Attempting to install 'uv' in virtual environment...")
@@ -334,7 +389,7 @@ def find_or_install_uv(venv_python: str) -> str:
             uv_path = VENV_DIR / "bin" / "uv"
         if uv_path.exists():
             ok("'uv' installed in virtual environment.")
-            return str(uv_path)
+            return [str(uv_path)]
 
     # Fall back to using pip directly
     warn("Could not install 'uv'. Will use pip for dependency management.")
@@ -520,7 +575,7 @@ def cmd_install():
         # UV_LINK_MODE=copy avoids hardlink issues on Windows/some Linux filesystems
         env_with_uv = {**os.environ, "UV_LINK_MODE": "copy"}
         print(f"  Installing all workspace packages via uv sync --all-packages...")
-        result = subprocess.run([uv, "sync", "--all-packages"], cwd=str(ROOT), env=env_with_uv)
+        result = subprocess.run(uv + ["sync", "--all-packages"], cwd=str(ROOT), env=env_with_uv)
         if result.returncode != 0:
             warn("uv sync --all-packages had issues. Falling back to pip...")
             uv = None
@@ -558,7 +613,7 @@ def cmd_install():
     # ── 9. Database migrations ──────────────────────────────────────
     banner("9. Running Database Migrations")
     env = {**os.environ, **{k: v for k, v in config.items()}}
-    upgrade_cmd = [uv, "run", "--package", "shared", "alembic", "upgrade", "head"] if uv else [venv_python, "-m", "alembic", "upgrade", "head"]
+    upgrade_cmd = uv + ["run", "--package", "shared", "alembic", "upgrade", "head"] if uv else [venv_python, "-m", "alembic", "upgrade", "head"]
     result = subprocess.run(upgrade_cmd, cwd=str(ROOT), env=env)
 
     if result.returncode != 0:
@@ -566,11 +621,11 @@ def cmd_install():
         # during consolidation. If we just restored, we should stamp it.
         if restored:
             warn("Migration failed. Attempting to stamp database to consolidated revision...")
-            stamp_cmd = [uv, "run", "--package", "shared", "alembic", "stamp", "001_full_schema"] if uv else [venv_python, "-m", "alembic", "stamp", "001_full_schema"]
+            stamp_cmd = uv + ["run", "--package", "shared", "alembic", "stamp", "001_full_schema"] if uv else [venv_python, "-m", "alembic", "stamp", "001_full_schema"]
             result = subprocess.run(stamp_cmd, cwd=str(ROOT), env=env)
             if result.returncode == 0:
                 ok("Database stamped to 001_full_schema. Retrying upgrade...")
-                upgrade_cmd = [uv, "run", "--package", "shared", "alembic", "upgrade", "head"] if uv else [venv_python, "-m", "alembic", "upgrade", "head"]
+                upgrade_cmd = uv + ["run", "--package", "shared", "alembic", "upgrade", "head"] if uv else [venv_python, "-m", "alembic", "upgrade", "head"]
                 result = subprocess.run(upgrade_cmd, cwd=str(ROOT), env=env)
 
         if result.returncode != 0:
@@ -582,7 +637,7 @@ def cmd_install():
     banner("10. Creating Initial Admin API Token")
     if uv:
         result = subprocess.run(
-            [uv, "run", "--package", "shared", "python", "scripts/create-key.py",
+            uv + ["run", "--package", "shared", "python", "scripts/create-key.py",
              f"Admin Setup {int(datetime.datetime.now().timestamp())}", "--type", "admin"],
             cwd=str(ROOT), env=env
         )
@@ -633,7 +688,7 @@ def cmd_refresh():
         # Set UV_LINK_MODE=copy to avoid hardlink issues on Windows
         env_with_uv = {**os.environ, "UV_LINK_MODE": "copy"}
         print(f"  Installing via uv sync...")
-        result = subprocess.run([uv, "sync"], cwd=str(ROOT), env=env_with_uv)
+        result = subprocess.run(uv + ["sync"], cwd=str(ROOT), env=env_with_uv)
         if result.returncode != 0:
             warn("uv sync had issues. Falling back to pip...")
             uv = None

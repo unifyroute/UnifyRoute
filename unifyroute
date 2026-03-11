@@ -47,7 +47,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 UV = None  # resolved lazily
 
 
-def _find_uv() -> str:
+def _find_uv() -> list[str]:
     global UV
     if UV:
         return UV
@@ -61,14 +61,27 @@ def _find_uv() -> str:
         venv_uv = venv_dir / "bin" / "uv"
 
     if venv_uv.exists():
-        uv = str(venv_uv)
+        uv = [str(venv_uv)]
     else:
-        uv = shutil.which("uv")
+        uv_path = shutil.which("uv")
+        if uv_path:
+            uv = [uv_path]
+        else:
+            uv = None
+
+    # Try as a python module
+    if not uv:
+        try:
+            result = subprocess.run([sys.executable, "-m", "uv", "--version"], capture_output=True, timeout=5)
+            if result.returncode == 0:
+                uv = [sys.executable, "-m", "uv"]
+        except Exception:
+            pass
 
     if not uv:
         home_uv = Path.home() / ".local" / "bin" / "uv"
         if home_uv.exists():
-            uv = str(home_uv)
+            uv = [str(home_uv)]
 
     if not uv:
         _die("'uv' not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh")
@@ -157,7 +170,7 @@ def _verify_master_password() -> bool:
 def _uv_run(args: list[str], **kwargs):
     """Run a command via uv in the project root."""
     uv = _find_uv()
-    return subprocess.run([uv, "run"] + args, cwd=str(SCRIPT_DIR), **kwargs)
+    return subprocess.run(uv + ["run"] + args, cwd=str(SCRIPT_DIR), **kwargs)
 
 
 # ── Commands ───────────────────────────────────────────────────────────────────
@@ -214,8 +227,8 @@ def cmd_start():
     # Use uv run if available
     uv = _find_uv()
     if uv:
-        cmd = [
-            uv, "run", "--package", "launcher", "python", "-m", "uvicorn",
+        cmd = uv + [
+            "run", "--package", "launcher", "python", "-m", "uvicorn",
             "--app-dir", "launcher/src",
             "launcher.main:app", "--port", port, "--host", host
         ]
