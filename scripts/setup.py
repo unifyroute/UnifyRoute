@@ -292,7 +292,11 @@ def create_venv():
         ok(f"Virtual environment already exists at {VENV_DIR.relative_to(ROOT)}")
         return
     info(f"Creating virtual environment at {VENV_DIR.relative_to(ROOT)}...")
-    subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True)
+    uv = find_uv()
+    if uv:
+        subprocess.run([uv, "venv", str(VENV_DIR)], check=True, cwd=str(ROOT))
+    else:
+        subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True)
     ok("Virtual environment created.")
 
 
