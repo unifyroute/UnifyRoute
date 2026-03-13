@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
     Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 } from "@/components/ui/dialog"
-import { Plus, ExternalLink, Trash2, ChevronRight, Activity, ShieldCheck, RefreshCw } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Plus, ExternalLink, Trash2, ChevronRight, Activity, ShieldCheck, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react"
 import {
     useCredentials, useProviders,
     createCredential, deleteCredential, updateCredential,
@@ -121,6 +122,23 @@ export function Credentials() {
         }
     }
 
+    async function handleBulkVerify() {
+        setBulkActionMsg("Verifying keys...")
+        setBulkActionError(false)
+        try {
+            await Promise.all(
+                Array.from(selectedIds).map(id => verifyCredential(id))
+            )
+            await mutate()
+            setBulkActionMsg("Successfully verified selected credentials.")
+            setSelectedIds(new Set())
+            setTimeout(() => setBulkActionMsg(null), 3000)
+        } catch (err: any) {
+            setBulkActionError(true)
+            setBulkActionMsg(err.message || "Bulk verification failed")
+        }
+    }
+
     // ── useEffect for oauth popup auto-close ──
     useEffect(() => {
         if (step !== "oauth-waiting") return
@@ -147,6 +165,7 @@ export function Credentials() {
             } else {
                 setActionMsg(res.message)
             }
+            await mutate() // refresh to show updated status pill
         } catch (err: any) {
             setActionError(true)
             setActionMsg(err.message || "Failed to verify")
@@ -304,6 +323,9 @@ export function Credentials() {
                                 {bulkActionMsg}
                             </span>
                         )}
+                        <Button size="sm" variant="outline" onClick={handleBulkVerify}>
+                            Verify Keys
+                        </Button>
                         <Button size="sm" variant="outline" onClick={() => handleBulkStatus(true)}>
                             Enable Selected
                         </Button>
@@ -373,10 +395,31 @@ export function Credentials() {
                                         {cred.expires_at ? new Date(cred.expires_at).toLocaleDateString() : "Never"}
                                     </TableCell>
                                     <TableCell>
-                                        {cred.enabled
-                                            ? <Badge className="bg-green-500 hover:bg-green-600">Active</Badge>
-                                            : <Badge variant="secondary">Disabled</Badge>
-                                        }
+                                        <div className="flex flex-col gap-1.5 items-start">
+                                            {cred.enabled
+                                                ? <Badge className="bg-green-500 hover:bg-green-600">Active</Badge>
+                                                : <Badge variant="secondary">Disabled</Badge>
+                                            }
+                                            {cred.status === "ok" && (
+                                                <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50 flex gap-1 px-1.5">
+                                                    <CheckCircle2 className="w-3 h-3" /> OK
+                                                </Badge>
+                                            )}
+                                            {cred.status === "error" && (
+                                                <TooltipProvider delayDuration={200}>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <Badge variant="outline" className="text-red-500 border-red-200 bg-red-50 flex gap-1 px-1.5 cursor-help">
+                                                                <AlertCircle className="w-3 h-3" /> Error
+                                                            </Badge>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent className="max-w-sm">
+                                                            <p className="text-xs whitespace-pre-wrap">{cred.error_message || "Connection failed"}</p>
+                                                        </TooltipContent>
+                                                    </Tooltip>
+                                                </TooltipProvider>
+                                            )}
+                                        </div>
                                     </TableCell>
                                     <TableCell className="text-right">
                                         {actionId === cred.id && actionMsg && (

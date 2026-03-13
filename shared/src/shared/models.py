@@ -56,6 +56,8 @@ class Credential(Base):
     oauth_meta: Mapped[dict | None] = mapped_column(sa_JSON, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str | None] = mapped_column(Text, nullable=True) # e.g. "ok", "error", "unverified"
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     provider: Mapped["Provider"] = relationship("Provider", back_populates="credentials")
     quota_snapshots: Mapped[list["QuotaSnapshot"]] = relationship("QuotaSnapshot", back_populates="credential")

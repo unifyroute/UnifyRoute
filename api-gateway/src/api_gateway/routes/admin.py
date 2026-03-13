@@ -290,8 +290,15 @@ async def verify_credential(
         )
         if health.ok:
             message = f"Connected to {provider_display} – {health.latency_ms}ms"
+            cred.status = "ok"
+            cred.error_message = None
         else:
             message = f"Cannot reach {provider_display}: {health.message}"
+            cred.status = "error"
+            cred.error_message = health.message
+            
+        await session.commit()
+            
         return {
             "status": "success" if health.ok else "error",
             "message": message,
@@ -299,6 +306,9 @@ async def verify_credential(
             "status_code": health.status_code,
         }
     except Exception as exc:
+        cred.status = "error"
+        cred.error_message = str(exc)
+        await session.commit()
         return {
             "status": "error",
             "message": f"Verification failed: {exc}",

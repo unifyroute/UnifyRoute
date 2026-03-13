@@ -41,6 +41,8 @@ class CredentialUpdate(APIModelBase):
     label: Optional[str] = None
     secret_key: Optional[str] = None
     enabled: Optional[bool] = None
+    status: Optional[str] = None
+    error_message: Optional[str] = None
     oauth_meta: Optional[Dict[str, Any]] = None
     expires_at: Optional[datetime] = None
 
@@ -50,6 +52,8 @@ class CredentialResponse(APIModelBase):
     label: str
     auth_type: str
     enabled: bool
+    status: Optional[str] = None
+    error_message: Optional[str] = None
     oauth_meta: Optional[Dict[str, Any]] = None
     expires_at: Optional[datetime] = None
 
